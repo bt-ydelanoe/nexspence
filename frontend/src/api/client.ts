@@ -514,9 +514,9 @@ export const nexspenceApi = {
       { params: { image, digest } },
     ),
 
-  // Browse — Raw file tree (path hierarchy from assets)
-  getRawBrowseTree: (repository: string) =>
-    apiClient.get(`/api/v1/browse/repositories/${encodeURIComponent(repository)}/raw-tree`),
+  // Browse — asset path tree (raw, Maven, npm, … — every non-OCI format)
+  getAssetBrowseTree: (repository: string) =>
+    apiClient.get(`/api/v1/browse/repositories/${encodeURIComponent(repository)}/asset-tree`),
 
   // Security — privilege → role membership map
   privilegeRoleMap: () =>

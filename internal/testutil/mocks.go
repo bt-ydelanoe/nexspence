@@ -686,11 +686,12 @@ type AssetRepo struct {
 	ListByComponentIDsCalls int
 	// ListByComponentIDCalls counts how many times the singular ListByComponentID has been called.
 	ListByComponentIDCalls int
-	// RawRowsByRepo maps repoName→raw browse assets; ListRawBrowseAssets returns the
+	// BrowseRowsByRepo maps repoName→browse assets; ListBrowseAssets returns the
 	// union for the requested repo names (mirrors the SQL WHERE rep.name IN (...)).
-	RawRowsByRepo map[string][]domain.RawBrowseAsset
-	RawBrowseErr  error // when non-nil, ListRawBrowseAssets returns it (500-branch seam)
-	BrowseErr     error // when non-nil, ListByRepoAndPath/ListPathsByRepo/ListRawAssetPaths return it (500-branch seam)
+	// The format filter is not modeled: tests seed only repos of one format.
+	BrowseRowsByRepo map[string][]domain.BrowseAsset
+	BrowseAssetsErr  error // when non-nil, ListBrowseAssets returns it (500-branch seam)
+	BrowseErr        error // when non-nil, ListByRepoAndPath/ListPathsByRepo/ListRawAssetPaths return it (500-branch seam)
 	// GetByPathErr, when non-nil, makes GetByPath return it. Separate from Err so
 	// a test can tell a lookup that failed from a path that does not exist —
 	// callers that must not treat the two alike need exactly that distinction.
@@ -1104,15 +1105,15 @@ func (a *AssetRepo) ListByRepoAndPath(_ context.Context, repoName, pathPrefix st
 	return out, nil
 }
 
-func (a *AssetRepo) ListRawBrowseAssets(_ context.Context, names []string) ([]domain.RawBrowseAsset, error) {
+func (a *AssetRepo) ListBrowseAssets(_ context.Context, names []string, _ domain.RepoFormat) ([]domain.BrowseAsset, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if a.RawBrowseErr != nil {
-		return nil, a.RawBrowseErr
+	if a.BrowseAssetsErr != nil {
+		return nil, a.BrowseAssetsErr
 	}
-	var out []domain.RawBrowseAsset
+	var out []domain.BrowseAsset
 	for _, n := range names {
-		out = append(out, a.RawRowsByRepo[n]...)
+		out = append(out, a.BrowseRowsByRepo[n]...)
 	}
 	return out, nil
 }

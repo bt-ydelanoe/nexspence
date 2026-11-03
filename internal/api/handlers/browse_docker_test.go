@@ -49,7 +49,8 @@ func mountBrowse(t *testing.T) (*gin.Engine, *testutil.RepoRepo, *testutil.Compo
 	r.DELETE("/api/v1/browse/repositories/:name/path", h.DeleteByPath)
 	r.DELETE("/api/v1/browse/repositories/:name/docker-tag", h.DeleteDockerTag)
 	r.DELETE("/api/v1/browse/repositories/:name/docker-image", h.DeleteDockerImage)
-	r.GET("/api/v1/browse/repositories/:name/raw-tree", h.RawTree)
+	r.GET("/api/v1/browse/repositories/:name/raw-tree", h.AssetTree)
+	r.GET("/api/v1/browse/repositories/:name/asset-tree", h.AssetTree)
 	return r, repos, comps, assets, blobs, store
 }
 

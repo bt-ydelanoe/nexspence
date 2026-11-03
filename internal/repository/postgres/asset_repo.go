@@ -607,7 +607,7 @@ func (r *assetRepo) ListRawAssetPaths(ctx context.Context, repoName string) ([]s
 	return out, rows.Err()
 }
 
-func (r *assetRepo) ListRawBrowseAssets(ctx context.Context, repoNames []string) ([]domain.RawBrowseAsset, error) {
+func (r *assetRepo) ListBrowseAssets(ctx context.Context, repoNames []string, format domain.RepoFormat) ([]domain.BrowseAsset, error) {
 	rows, err := lockDB(ctx, r.db).Query(ctx,
 		`SELECT a.path, a.size_bytes, COALESCE(a.sha256, ''), COALESCE(a.content_type, ''),
 		        c.updated_at, COALESCE(a.component_id::text, ''), rep.name
@@ -615,17 +615,17 @@ func (r *assetRepo) ListRawBrowseAssets(ctx context.Context, repoNames []string)
 		 JOIN components c ON c.id = a.component_id
 		 JOIN repositories rep ON rep.id = c.repository_id
 		 WHERE rep.name = ANY($1)
-		   AND lower(trim(rep.format)) = 'raw'
+		   AND lower(trim(rep.format)) = lower($2)
 		 ORDER BY a.path`,
-		repoNames,
+		repoNames, string(format),
 	)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []domain.RawBrowseAsset
+	var out []domain.BrowseAsset
 	for rows.Next() {
-		var a domain.RawBrowseAsset
+		var a domain.BrowseAsset
 		if err := rows.Scan(&a.Path, &a.SizeBytes, &a.SHA256, &a.ContentType, &a.UpdatedAt, &a.ComponentID, &a.RepoName); err != nil {
 			return nil, err
 		}
