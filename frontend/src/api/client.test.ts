@@ -768,8 +768,8 @@ describe('nexspenceApi helpers', () => {
     expect(res.status).toBe(200)
   })
 
-  it('getRawBrowseTree calls GET /api/v1/browse/repositories/:name/raw-tree', async () => {
-    const res = await nexspenceApi.getRawBrowseTree('raw-hosted')
+  it('getAssetBrowseTree calls GET /api/v1/browse/repositories/:name/asset-tree', async () => {
+    const res = await nexspenceApi.getAssetBrowseTree('raw-hosted')
     expect(res.status).toBe(200)
   })
 

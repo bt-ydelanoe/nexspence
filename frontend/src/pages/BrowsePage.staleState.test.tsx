@@ -54,7 +54,7 @@ describe('BrowsePage — single-item Promote seeds the rule from the fresh fetch
     const user = userEvent.setup()
     const promoted: string[] = []
     server.use(
-      http.get('/api/v1/browse/repositories/:name/raw-tree', () => HttpResponse.json(twoFileTree)),
+      http.get('/api/v1/browse/repositories/:name/asset-tree', () => HttpResponse.json(twoFileTree)),
       http.get('/service/rest/v1/components/:id', () => HttpResponse.json({ tags: [] })),
       http.get('/api/v1/components/:id/promotion-rules', ({ params }) =>
         HttpResponse.json(params.id === 'comp-raw-1'
@@ -96,6 +96,10 @@ describe('BrowsePage — single-item Promote seeds the rule from the fresh fetch
 })
 
 describe('BrowsePage — bulk delete invalidates on partial failure', () => {
+  beforeEach(() => {
+    localStorage.setItem('browse-view', 'list')
+  })
+
   it('refreshes the component list when a later delete in the batch fails', async () => {
     const user = userEvent.setup()
     let componentsFetches = 0
@@ -151,7 +155,7 @@ describe('BrowsePage — upload aborts when the modal goes away', () => {
     const user = userEvent.setup()
     const abortSpy = vi.spyOn(XMLHttpRequest.prototype, 'abort')
     server.use(
-      http.get('/api/v1/browse/repositories/:name/raw-tree', () => HttpResponse.json(rawTree)),
+      http.get('/api/v1/browse/repositories/:name/asset-tree', () => HttpResponse.json(rawTree)),
       // The PUT never resolves within the test: the upload stays in flight.
       http.put('/repository/:name/*', () => new Promise<never>(() => {})),
     )
