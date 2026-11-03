@@ -102,6 +102,9 @@ type NexusMigrationConfig struct {
 	JWTSecret     string
 	EncryptionKey []byte
 	Log           logger.Logger
+	// LogItemErrors logs each non-fatal per-item failure (log.migration_item_errors).
+	// Job-ending failures are logged regardless.
+	LogItemErrors bool
 	// HTTPClientFor builds the client used to reach the source Nexus. Defaults
 	// to the SSRF-guarded netguard client; tests override it for loopback.
 	HTTPClientFor func(timeout time.Duration) *http.Client
@@ -124,6 +127,7 @@ type NexusMigrationService struct {
 	selectors    *ContentSelectorService
 	deps         formats.Deps
 	log          logger.Logger
+	logItemErrs  bool
 
 	primaryKey []byte
 	legacyKey  []byte
@@ -152,6 +156,7 @@ func NewNexusMigrationService(cfg NexusMigrationConfig) *NexusMigrationService {
 		selectors:    cfg.Selectors,
 		deps:         cfg.Deps,
 		log:          cfg.Log,
+		logItemErrs:  cfg.LogItemErrors,
 		newClient:    cfg.HTTPClientFor,
 		cancels:      make(map[string]context.CancelFunc),
 		dones:        make(map[string]chan struct{}),
@@ -373,6 +378,9 @@ func validateNexusURL(raw string) error {
 type progress struct {
 	jobs  repository.MigrationRepo
 	jobID string
+	log   logger.Logger // nil = no logging
+	// logItems gates the per-item line in fail; flush failures always log.
+	logItems bool
 
 	totalRepos  int
 	doneRepos   int
@@ -388,17 +396,31 @@ func (p *progress) setTotals(ctx context.Context, totalRepos int, totalAssets in
 }
 
 func (p *progress) flush(ctx context.Context) {
-	_ = p.jobs.UpdateProgress(ctx, p.jobID, p.doneRepos, p.doneAssets, p.errorCount, p.lastError)
+	if err := p.jobs.UpdateProgress(ctx, p.jobID, p.doneRepos, p.doneAssets, p.errorCount, p.lastError); err != nil {
+		p.warn(ctx, "migration: cannot record progress", "err", err)
+	}
 }
 
 // fail records one non-fatal problem. A migration copies thousands of
 // independent things; one that will not come across is counted and named, and
-// the rest of the run continues.
+// the rest of the run continues. The job row keeps only the latest message, so
+// each one is also logged — the log is the only complete record of a run's
+// failures.
 func (p *progress) fail(ctx context.Context, format string, args ...any) {
 	msg := fmt.Sprintf(format, args...)
 	p.errorCount++
 	p.lastError = &msg
+	if p.logItems {
+		p.warn(ctx, "migration: item failed", "err", msg, "errorCount", p.errorCount)
+	}
 	p.flush(ctx)
+}
+
+func (p *progress) warn(ctx context.Context, msg string, kv ...any) {
+	if p.log == nil {
+		return
+	}
+	logger.WithTraceContext(ctx, p.log).Warnw(msg, append([]any{"job", p.jobID}, kv...)...)
 }
 
 func (s *NexusMigrationService) run(ctx context.Context, jobID string) {
@@ -459,7 +481,7 @@ func (s *NexusMigrationService) run(ctx context.Context, jobID string) {
 	}
 
 	client := s.clientFor(job.SourceURL, job.SourceUser, password, migrationHTTPTimeout)
-	p := &progress{jobs: s.jobs, jobID: jobID}
+	p := &progress{jobs: s.jobs, jobID: jobID, log: s.log, logItems: s.logItemErrs}
 
 	runErr := s.runStages(ctx, client, job, p)
 	switch {
@@ -473,6 +495,9 @@ func (s *NexusMigrationService) run(ctx context.Context, jobID string) {
 }
 
 func (s *NexusMigrationService) finish(ctx context.Context, jobID string, status domain.MigrationJobStatus, msg string) {
+	if status == domain.MigrationError {
+		s.logf(ctx, "migration: job %s failed: %s", jobID, msg)
+	}
 	_ = s.jobs.FinishJob(ctx, jobID, status, &msg)
 }
 

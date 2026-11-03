@@ -15,6 +15,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+	"go.uber.org/zap/zaptest/observer"
 
 	"github.com/nexspence-oss/nexspence/internal/domain"
 	"github.com/nexspence-oss/nexspence/internal/formats"
@@ -226,6 +228,8 @@ type migHarness struct {
 	rules      *testutil.RoutingRuleRepo
 	csRepo     *testutil.ContentSelectorRepo
 	nexus      *httptest.Server
+	logs       *observer.ObservedLogs
+	cfg        service.NexusMigrationConfig
 }
 
 func newMigHarness(t *testing.T, fake *fakeNexus, existingUsers ...*domain.User) *migHarness {
@@ -265,7 +269,10 @@ func newMigHarness(t *testing.T, fake *fakeNexus, existingUsers ...*domain.User)
 	selectorSvc, err := service.NewContentSelectorService(h.csRepo)
 	require.NoError(t, err)
 
-	h.svc = service.NewNexusMigrationService(service.NexusMigrationConfig{
+	core, logs := observer.New(zapcore.WarnLevel)
+	h.logs = logs
+
+	h.cfg = service.NexusMigrationConfig{
 		Jobs:          h.jobs,
 		Repos:         service.NewRepositoryService(repoRepo, blobRepo, blobStore, testutil.NewCleanupPolicyRepo()),
 		Users:         h.users,
@@ -275,10 +282,18 @@ func newMigHarness(t *testing.T, fake *fakeNexus, existingUsers ...*domain.User)
 		Selectors:     selectorSvc,
 		Deps:          deps,
 		JWTSecret:     "unit-test-secret",
-		Log:           zap.NewNop().Sugar(),
+		Log:           zap.New(core).Sugar(),
+		LogItemErrors: true,
 		HTTPClientFor: func(time.Duration) *http.Client { return srv.Client() },
-	})
+	}
+	h.svc = service.NewNexusMigrationService(h.cfg)
 	return h
+}
+
+// reconfigure rebuilds the service with one change to the harness config.
+func (h *migHarness) reconfigure(change func(*service.NexusMigrationConfig)) {
+	change(&h.cfg)
+	h.svc = service.NewNexusMigrationService(h.cfg)
 }
 
 // startJob creates a job with all scopes on and runs it to completion.
@@ -375,6 +390,55 @@ func TestNexusMigration_UnreachableSourceFailsJobWithError(t *testing.T) {
 	require.NotNil(t, failed.LastError)
 	assert.NotEmpty(t, *failed.LastError)
 	require.NotNil(t, failed.FinishedAt)
+
+	logged := h.logs.FilterMessageSnippet("migration: job " + job.ID + " failed").All()
+	assert.Len(t, logged, 1, "the error that failed the job must reach the server log")
+}
+
+// The job row keeps only the latest per-item message, so every failure must
+// also be logged — otherwise all but the last are lost.
+func TestNexusMigration_EveryItemFailureIsLogged(t *testing.T) {
+	fake := &fakeNexus{
+		settings: `[
+			{"name":"docker repo","format":"docker","type":"hosted","online":true},
+			{"name":"other repo","format":"docker","type":"hosted","online":true}
+		]`,
+	}
+	h := newMigHarness(t, fake)
+	job := h.startJob(t)
+	done := h.waitForStatus(t, job.ID, domain.MigrationDone)
+	require.Equal(t, 2, done.ErrorCount)
+
+	logged := h.logs.FilterMessage("migration: item failed").All()
+	require.Len(t, logged, 2)
+	var msgs []string
+	for _, e := range logged {
+		ctx := e.ContextMap()
+		assert.Equal(t, job.ID, ctx["job"])
+		msgs = append(msgs, fmt.Sprint(ctx["err"]))
+	}
+	assert.Contains(t, msgs[0]+msgs[1], `"docker repo"`)
+	assert.Contains(t, msgs[0]+msgs[1], `"other repo"`)
+}
+
+// log.migration_item_errors=false silences the per-item lines only: the job
+// still counts and names its failures, and a job-ending failure still logs.
+func TestNexusMigration_ItemFailureLoggingCanBeDisabled(t *testing.T) {
+	fake := &fakeNexus{
+		settings: `[{"name":"docker repo","format":"docker","type":"hosted","online":true}]`,
+	}
+	h := newMigHarness(t, fake)
+	h.reconfigure(func(c *service.NexusMigrationConfig) { c.LogItemErrors = false })
+
+	job := h.startJob(t)
+	done := h.waitForStatus(t, job.ID, domain.MigrationDone)
+	require.Equal(t, 1, done.ErrorCount)
+	require.NotNil(t, done.LastError)
+	assert.Empty(t, h.logs.FilterMessage("migration: item failed").All())
+
+	failing := h.startJob(t, func(j *domain.MigrationJob) { j.SourceURL = "http://127.0.0.1:1/nexus" })
+	h.waitForStatus(t, failing.ID, domain.MigrationError)
+	assert.Len(t, h.logs.FilterMessageSnippet("migration: job "+failing.ID+" failed").All(), 1)
 }
 
 // ── repository creation ──────────────────────────────────────────────────────

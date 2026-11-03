@@ -238,6 +238,11 @@ type AuthConfig struct {
 type LogConfig struct {
 	Level  string `mapstructure:"level"`  // debug, info, warn, error
 	Format string `mapstructure:"format"` // json, text
+	// MigrationItemErrors logs every non-fatal Nexus-migration failure (one
+	// line per repository, asset, privilege, … that does not come across).
+	// The job row keeps only the latest message, so this is the full record;
+	// a run against a very broken source can emit thousands of lines.
+	MigrationItemErrors bool `mapstructure:"migration_item_errors"`
 }
 
 // LDAPConfig configures LDAP/Active Directory authentication.
@@ -664,6 +669,7 @@ func Load(path string) (*Config, error) {
 	v.SetDefault("auth.allow_insecure_defaults", false)
 	v.SetDefault("log.level", "info")
 	v.SetDefault("log.format", "json")
+	v.SetDefault("log.migration_item_errors", true)
 	v.SetDefault("search.min_query_len", 2)
 	v.SetDefault("cleanup.default_schedule", "0 */6 * * *")
 	v.SetDefault("gc.enabled", true)

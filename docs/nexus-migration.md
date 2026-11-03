@@ -154,6 +154,10 @@ That single property is what makes the three lifecycle operations cheap:
 
 A migration copies thousands of independent things, so one that will not come across is counted in `errorCount`, named in `lastError`, and the run continues. Only a failure that makes the rest impossible — the source becoming unreachable, credentials being rejected — ends the job as `error`.
 
+`lastError` holds only the most recent message. Every failure is also written to the server log at `WARN`: per-item failures as `migration: item failed` with the job ID (`job`), the message (`err`) and the running `errorCount`; a job-ending failure as `migration: job <id> failed: …`. When tracing is enabled each line carries the run's `trace_id`. To list everything a run failed on, filter the server log by the job ID.
+
+The per-item lines are on by default. A run against a badly broken source can emit thousands of them; set `log.migration_item_errors: false` (env `NEXSPENCE_LOG_MIGRATION_ITEM_ERRORS=false`) to turn them off. `errorCount` and `lastError` are kept either way, and a job-ending failure is always logged.
+
 Common entries:
 
 | `lastError` | Meaning |

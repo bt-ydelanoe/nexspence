@@ -118,6 +118,10 @@ bootstrap:
 log:
   level: "info"   # debug | info | warn | error
   format: "json"  # json | text
+  # Log every non-fatal Nexus-migration failure at WARN, one line per item
+  # ("migration: item failed"). The job itself keeps only the latest message.
+  # Env: NEXSPENCE_LOG_MIGRATION_ITEM_ERRORS
+  migration_item_errors: true
 
 search:
   min_query_len: 2
