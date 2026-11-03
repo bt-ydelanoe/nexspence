@@ -15,6 +15,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+	"go.uber.org/zap/zaptest/observer"
 
 	"github.com/nexspence-oss/nexspence/internal/domain"
 	"github.com/nexspence-oss/nexspence/internal/formats"
@@ -226,6 +228,7 @@ type migHarness struct {
 	rules      *testutil.RoutingRuleRepo
 	csRepo     *testutil.ContentSelectorRepo
 	nexus      *httptest.Server
+	logs       *observer.ObservedLogs
 }
 
 func newMigHarness(t *testing.T, fake *fakeNexus, existingUsers ...*domain.User) *migHarness {
@@ -265,6 +268,9 @@ func newMigHarness(t *testing.T, fake *fakeNexus, existingUsers ...*domain.User)
 	selectorSvc, err := service.NewContentSelectorService(h.csRepo)
 	require.NoError(t, err)
 
+	core, logs := observer.New(zapcore.WarnLevel)
+	h.logs = logs
+
 	h.svc = service.NewNexusMigrationService(service.NexusMigrationConfig{
 		Jobs:          h.jobs,
 		Repos:         service.NewRepositoryService(repoRepo, blobRepo, blobStore, testutil.NewCleanupPolicyRepo()),
@@ -275,7 +281,7 @@ func newMigHarness(t *testing.T, fake *fakeNexus, existingUsers ...*domain.User)
 		Selectors:     selectorSvc,
 		Deps:          deps,
 		JWTSecret:     "unit-test-secret",
-		Log:           zap.NewNop().Sugar(),
+		Log:           zap.New(core).Sugar(),
 		HTTPClientFor: func(time.Duration) *http.Client { return srv.Client() },
 	})
 	return h
@@ -375,6 +381,35 @@ func TestNexusMigration_UnreachableSourceFailsJobWithError(t *testing.T) {
 	require.NotNil(t, failed.LastError)
 	assert.NotEmpty(t, *failed.LastError)
 	require.NotNil(t, failed.FinishedAt)
+
+	logged := h.logs.FilterMessageSnippet("migration: job " + job.ID + " failed").All()
+	assert.Len(t, logged, 1, "the error that failed the job must reach the server log")
+}
+
+// The job row keeps only the latest per-item message, so every failure must
+// also be logged — otherwise all but the last are lost.
+func TestNexusMigration_EveryItemFailureIsLogged(t *testing.T) {
+	fake := &fakeNexus{
+		settings: `[
+			{"name":"docker repo","format":"docker","type":"hosted","online":true},
+			{"name":"other repo","format":"docker","type":"hosted","online":true}
+		]`,
+	}
+	h := newMigHarness(t, fake)
+	job := h.startJob(t)
+	done := h.waitForStatus(t, job.ID, domain.MigrationDone)
+	require.Equal(t, 2, done.ErrorCount)
+
+	logged := h.logs.FilterMessage("migration: item failed").All()
+	require.Len(t, logged, 2)
+	var msgs []string
+	for _, e := range logged {
+		ctx := e.ContextMap()
+		assert.Equal(t, job.ID, ctx["job"])
+		msgs = append(msgs, fmt.Sprint(ctx["err"]))
+	}
+	assert.Contains(t, msgs[0]+msgs[1], `"docker repo"`)
+	assert.Contains(t, msgs[0]+msgs[1], `"other repo"`)
 }
 
 // ── repository creation ──────────────────────────────────────────────────────

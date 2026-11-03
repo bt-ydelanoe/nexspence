@@ -554,9 +554,9 @@ func TestAssetRepoQueries_ListRawAssetPaths_EmptyRepo(t *testing.T) {
 	}
 }
 
-// ── ListRawBrowseAssets ───────────────────────────────────────────────────────
+// ── ListBrowseAssets ───────────────────────────────────────────────────────
 
-func TestAssetRepoQueries_ListRawBrowseAssets_ReturnsRawFormatOnly(t *testing.T) {
+func TestAssetRepoQueries_ListBrowseAssets_ReturnsRawFormatOnly(t *testing.T) {
 	pool := pgtest.Pool(t)
 	pgtest.Truncate(t, pool, "blob_stores", "repositories", "components")
 	ctx := context.Background()
@@ -572,9 +572,9 @@ func TestAssetRepoQueries_ListRawBrowseAssets_ReturnsRawFormatOnly(t *testing.T)
 		t.Fatalf("Create: %v", err)
 	}
 
-	rows, err := repo.ListRawBrowseAssets(ctx, []string{p.RepoName})
+	rows, err := repo.ListBrowseAssets(ctx, []string{p.RepoName}, domain.FormatRaw)
 	if err != nil {
-		t.Fatalf("ListRawBrowseAssets: %v", err)
+		t.Fatalf("ListBrowseAssets: %v", err)
 	}
 	if len(rows) != 1 {
 		t.Fatalf("expected 1 raw browse asset, got %d", len(rows))
@@ -593,7 +593,7 @@ func TestAssetRepoQueries_ListRawBrowseAssets_ReturnsRawFormatOnly(t *testing.T)
 	}
 }
 
-func TestAssetRepoQueries_ListRawBrowseAssets_MultipleRepos(t *testing.T) {
+func TestAssetRepoQueries_ListBrowseAssets_MultipleRepos(t *testing.T) {
 	pool := pgtest.Pool(t)
 	pgtest.Truncate(t, pool, "blob_stores", "repositories", "components")
 	ctx := context.Background()
@@ -613,27 +613,49 @@ func TestAssetRepoQueries_ListRawBrowseAssets_MultipleRepos(t *testing.T) {
 		t.Fatalf("Create p2: %v", err)
 	}
 
-	rows, err := repo.ListRawBrowseAssets(ctx, []string{p1.RepoName, p2.RepoName})
+	rows, err := repo.ListBrowseAssets(ctx, []string{p1.RepoName, p2.RepoName}, domain.FormatRaw)
 	if err != nil {
-		t.Fatalf("ListRawBrowseAssets: %v", err)
+		t.Fatalf("ListBrowseAssets: %v", err)
 	}
 	if len(rows) != 2 {
 		t.Errorf("expected 2 rows, got %d", len(rows))
 	}
 }
 
-func TestAssetRepoQueries_ListRawBrowseAssets_EmptySliceReturnsEmpty(t *testing.T) {
+func TestAssetRepoQueries_ListBrowseAssets_EmptySliceReturnsEmpty(t *testing.T) {
 	pool := pgtest.Pool(t)
 	pgtest.Truncate(t, pool, "blob_stores", "repositories", "components")
 	ctx := context.Background()
 	repo := NewAssetRepo(pool)
 
-	rows, err := repo.ListRawBrowseAssets(ctx, []string{})
+	rows, err := repo.ListBrowseAssets(ctx, []string{}, domain.FormatRaw)
 	if err != nil {
-		t.Fatalf("ListRawBrowseAssets(empty): %v", err)
+		t.Fatalf("ListBrowseAssets(empty): %v", err)
 	}
 	if len(rows) != 0 {
 		t.Errorf("expected 0 rows, got %d", len(rows))
+	}
+}
+
+func TestAssetRepoQueries_ListBrowseAssets_FiltersByFormat(t *testing.T) {
+	pool := pgtest.Pool(t)
+	pgtest.Truncate(t, pool, "blob_stores", "repositories", "components")
+	ctx := context.Background()
+
+	p := makeAssetParent(t, ctx, "rba_fmt") // a raw repository
+	repo := NewAssetRepo(pool)
+	a := makeAsset(p, "/file.bin")
+	a.BlobKey = "bk_rba_fmt"
+	if err := repo.Create(ctx, a); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	rows, err := repo.ListBrowseAssets(ctx, []string{p.RepoName}, domain.FormatMaven2)
+	if err != nil {
+		t.Fatalf("ListBrowseAssets: %v", err)
+	}
+	if len(rows) != 0 {
+		t.Errorf("a raw repository must not answer a maven2 listing, got %d rows", len(rows))
 	}
 }
 

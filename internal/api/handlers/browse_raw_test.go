@@ -17,7 +17,7 @@ import (
 func TestBrowse_RawTree_OK(t *testing.T) {
 	r, repos, _, assets, _, _ := mountBrowse(t)
 	seedRepo(t, repos, &domain.Repository{ID: "r1", Name: "raw-host", Format: domain.FormatRaw, Type: domain.TypeHosted})
-	assets.RawRowsByRepo = map[string][]domain.RawBrowseAsset{
+	assets.BrowseRowsByRepo = map[string][]domain.BrowseAsset{
 		"raw-host": {
 			{Path: "/docs/readme.txt", SizeBytes: 12, SHA256: "abc", ContentType: "text/plain", ComponentID: "c1"},
 			{Path: "/docs/guide.txt", SizeBytes: 34},
@@ -57,7 +57,7 @@ func TestBrowse_RawTree_GroupExpansion(t *testing.T) {
 		ID: "g1", Name: "raw-group", Format: domain.FormatRaw, Type: domain.TypeGroup,
 		FormatConfig: map[string]any{"member_names": []string{"raw-a", "raw-b"}},
 	})
-	assets.RawRowsByRepo = map[string][]domain.RawBrowseAsset{
+	assets.BrowseRowsByRepo = map[string][]domain.BrowseAsset{
 		"raw-a":     {{Path: "/from-a.txt"}},
 		"raw-b":     {{Path: "/from-b.txt"}},
 		"raw-other": {{Path: "/outsider.txt"}},
@@ -108,10 +108,55 @@ func TestBrowse_RawTree_WrongFormat_400(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 }
 
+// ── AssetTree (any path-addressed format) ──────────────────────
+
+// A Maven repository folds groupId/artifactId/version into nested folders —
+// the layout Nexus shows — instead of a flat component list.
+func TestBrowse_AssetTree_MavenFoldsCoordinatesIntoFolders(t *testing.T) {
+	r, repos, _, assets, _, _ := mountBrowse(t)
+	seedRepo(t, repos, &domain.Repository{ID: "m1", Name: "maven-releases", Format: domain.FormatMaven2, Type: domain.TypeHosted})
+	assets.BrowseRowsByRepo = map[string][]domain.BrowseAsset{
+		"maven-releases": {
+			{Path: "/org/apache/commons/commons-lang3/3.12.0/commons-lang3-3.12.0.jar", SizeBytes: 100, ComponentID: "c1"},
+			{Path: "/org/apache/commons/commons-lang3/3.12.0/commons-lang3-3.12.0.pom", SizeBytes: 10, ComponentID: "c1"},
+			{Path: "/org/apache/commons/commons-lang3/maven-metadata.xml", SizeBytes: 5, ComponentID: "c2"},
+		},
+	}
+
+	rec := do(t, r, http.MethodGet, "/api/v1/browse/repositories/maven-releases/asset-tree", nil)
+	require.Equal(t, http.StatusOK, rec.Code)
+	var got browseTreeResp
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+	assert.Equal(t, "maven2", got.Format)
+
+	node := got.Root
+	for _, seg := range []string{"org", "apache", "commons", "commons-lang3"} {
+		var ok bool
+		node, ok = findChild(node, seg)
+		require.True(t, ok, "missing folder %q", seg)
+		assert.Equal(t, "folder", node.Kind)
+	}
+	_, hasMeta := findChild(node, "maven-metadata.xml")
+	assert.True(t, hasMeta)
+	version, ok := findChild(node, "3.12.0")
+	require.True(t, ok)
+	jar, ok := findChild(version, "commons-lang3-3.12.0.jar")
+	require.True(t, ok)
+	assert.Equal(t, "file", jar.Kind)
+	assert.Equal(t, "c1", jar.ComponentID)
+}
+
+func TestBrowse_AssetTree_OCIRegistry_400(t *testing.T) {
+	r, repos, _, _, _, _ := mountBrowse(t)
+	seedRepo(t, repos, &domain.Repository{ID: "o1", Name: "oci-host", Format: domain.FormatOCI, Type: domain.TypeHosted})
+	rec := do(t, r, http.MethodGet, "/api/v1/browse/repositories/oci-host/asset-tree", nil)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
 func TestBrowse_RawTree_ListError_500(t *testing.T) {
 	r, repos, _, assets, _, _ := mountBrowse(t)
 	seedRepo(t, repos, &domain.Repository{ID: "r1", Name: "raw-host", Format: domain.FormatRaw, Type: domain.TypeHosted})
-	assets.RawBrowseErr = errors.New("query failed")
+	assets.BrowseAssetsErr = errors.New("query failed")
 	rec := do(t, r, http.MethodGet, "/api/v1/browse/repositories/raw-host/raw-tree", nil)
 	assert.Equal(t, http.StatusInternalServerError, rec.Code)
 }

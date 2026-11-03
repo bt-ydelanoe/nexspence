@@ -9,8 +9,10 @@ import {
   Download,
   FileText,
   FolderOpen,
+  FolderTree,
   Layers,
   Link,
+  List,
   Package,
   RefreshCw,
   ShieldAlert,
@@ -111,6 +113,26 @@ interface DockerLeafSelection {
   componentId: string
   imageRef?: string
   version?: string
+}
+
+type BrowseViewMode = 'tree' | 'list'
+
+// The List/Tree choice is a per-browser preference, applied to every
+// repository that offers both; tree is the default.
+const BROWSE_VIEW_KEY = 'browse-view'
+
+function readBrowseViewMode(): BrowseViewMode {
+  try {
+    return localStorage.getItem(BROWSE_VIEW_KEY) === 'list' ? 'list' : 'tree'
+  } catch {
+    return 'tree'
+  }
+}
+
+function writeBrowseViewMode(mode: BrowseViewMode) {
+  try {
+    localStorage.setItem(BROWSE_VIEW_KEY, mode)
+  } catch { /* storage unavailable: the choice lasts for this page only */ }
 }
 
 interface RawTreeNode {
@@ -1309,6 +1331,7 @@ export default function BrowsePage() {
   // fires once per navigation even as tree data arrives asynchronously.
   const drilledRef = useRef<string>('')
   const [page, setPage] = useState(0)
+  const [viewMode, setViewMode] = useState<BrowseViewMode>(readBrowseViewMode)
   const [treeCollapsed, setTreeCollapsed] = useState<Record<string, boolean>>({})
   const [dockerSelection, setDockerSelection] = useState<DockerLeafSelection | null>(null)
   const [rawSelection, setRawSelection] = useState<RawFileSelection | null>(null)
@@ -1426,6 +1449,11 @@ export default function BrowsePage() {
   const selectedRepo = useMemo(() => repos.find((r) => r.name === repoName), [repos, repoName])
   const isOciDistribution = selectedRepo?.format?.toLowerCase() === 'docker' || selectedRepo?.format?.toLowerCase() === 'oci'
   const isRaw = selectedRepo?.format?.toLowerCase() === 'raw'
+  // Every format but the OCI registries is addressed by path, so it can be
+  // browsed as a folder tree (a Maven groupId/artifactId/version reads as
+  // nested folders) or as the paginated component list.
+  const canShowTree = !!selectedRepo && !isOciDistribution
+  const showTree = canShowTree && viewMode === 'tree'
 
   const { data: components, isLoading, isError, error: componentsError, refetch } = useQuery({
     queryKey: ['components', repoName, page],
@@ -1435,7 +1463,9 @@ export default function BrowsePage() {
           params: { repository: repoName, limit, offset: page * limit },
         })
         .then((r) => r.data as { items: Component[]; continuationToken: string | null }),
-    enabled: !!repoName && !isOciDistribution && !isRaw,
+    // Waits for the repository to resolve: until then its format is unknown,
+    // and a tree-browsed repository would fetch a list it never shows.
+    enabled: !!selectedRepo && !isOciDistribution && !showTree,
     retry: (failureCount, err: unknown) => {
       const status = (err as { response?: { status?: number } })?.response?.status
       if (status === 403) return false
@@ -1461,8 +1491,8 @@ export default function BrowsePage() {
   } = useQuery({
     queryKey: ['rawBrowseTree', repoName],
     queryFn: () =>
-      nexspenceApi.getRawBrowseTree(repoName).then((r) => r.data as { root: RawTreeNode }),
-    enabled: !!repoName && isRaw,
+      nexspenceApi.getAssetBrowseTree(repoName).then((r) => r.data as { root: RawTreeNode }),
+    enabled: !!repoName && showTree,
   })
 
   const { data: dockerDetail, isLoading: dockerDetailLoading } = useQuery({
@@ -1532,9 +1562,9 @@ export default function BrowsePage() {
     }
   }, [highlightComponentId, isOciDistribution, dockerTree, repoName])
 
-  // Auto-drill Raw tree by componentId.
+  // Auto-drill the asset tree by componentId.
   useEffect(() => {
-    if (!highlightComponentId || !isRaw || !rawTree?.root) return
+    if (!highlightComponentId || !showTree || !rawTree?.root) return
     const key = `raw:${repoName}:${highlightComponentId}`
     if (drilledRef.current === key) return
     const hit = findWithAncestors(
@@ -1549,11 +1579,11 @@ export default function BrowsePage() {
       return next
     })
     setRawSelection({ path: hit.leaf.path, node: hit.leaf })
-  }, [highlightComponentId, isRaw, rawTree, repoName])
+  }, [highlightComponentId, showTree, rawTree, repoName])
 
   const subtitle = !repoName
     ? 'Select a repository to browse'
-    : isOciDistribution || isRaw
+    : isOciDistribution || showTree
       ? selectedRepo!.name
       : `${items.length} components loaded`
 
@@ -1569,7 +1599,7 @@ export default function BrowsePage() {
         {repoName && (
           <HoloButton
             style={{ padding: 8, lineHeight: 0 }}
-            onClick={() => isOciDistribution ? refetchDockerTree() : isRaw ? refetchRawTree() : refetch()}
+            onClick={() => isOciDistribution ? refetchDockerTree() : showTree ? refetchRawTree() : refetch()}
             title="Refresh"
           >
             <RefreshCw size={16} />
@@ -1602,6 +1632,31 @@ export default function BrowsePage() {
           <HoloButton icon={<Terminal size={14} />} onClick={() => setSetupOpen(true)}>
             Set me up
           </HoloButton>
+        )}
+        {canShowTree && (
+          <div role="group" aria-label="View mode" style={{ display: 'flex', gap: 4 }}>
+            {([
+              ['tree', 'Tree', <FolderTree key="t" size={14} />],
+              ['list', 'List', <List key="l" size={14} />],
+            ] as const).map(([mode, label, icon]) => (
+              <HoloButton
+                key={mode}
+                variant={viewMode === mode ? 'primary' : 'default'}
+                icon={icon}
+                aria-pressed={viewMode === mode}
+                onClick={() => {
+                  if (viewMode === mode) return
+                  setViewMode(mode)
+                  writeBrowseViewMode(mode)
+                  setRawSelection(null)
+                  setDetailComponentId(null)
+                  setSelectedComponentIDs(new Set())
+                }}
+              >
+                {label}
+              </HoloButton>
+            ))}
+          </div>
         )}
         {isRaw && selectedRepo?.type === 'hosted' && (isAdmin() || myPrivs.some(p =>
           (p.attrs?.actions as string[] | undefined)?.includes('write')
@@ -1710,7 +1765,7 @@ export default function BrowsePage() {
             </div>
           </div>
         )
-      ) : isRaw ? (
+      ) : showTree ? (
         rawTreeLoading ? (
           <div style={S.empty}>Loading tree…</div>
         ) : !rawTree?.root?.children?.length ? (
@@ -1739,7 +1794,9 @@ export default function BrowsePage() {
                       setDeleteTarget({ path: node.path, repo: repoName, label: node.path })
                     } else {
                       const paths = collectLeafPaths(node)
-                      setDeleteTarget({ path: node.path, repo: repoName, label: node.path, affectedPaths: paths })
+                      // The server deletes by prefix; the trailing slash keeps
+                      // folder "commons" from also matching "commons-lang3".
+                      setDeleteTarget({ path: node.path, repo: repoName, label: node.path, affectedPaths: paths, paths: [`${node.path.replace(/\/+$/, '')}/`] })
                     }
                   }}
                   onUsage={() => setSetupOpen(true)}

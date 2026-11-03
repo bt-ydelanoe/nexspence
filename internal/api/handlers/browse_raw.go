@@ -22,8 +22,13 @@ type rawBrowseNode struct {
 	Children    []*rawBrowseNode `json:"children,omitempty"`
 }
 
-// RawTree handles GET /api/v1/browse/repositories/:name/raw-tree
-func (h *BrowseHandler) RawTree(c *gin.Context) {
+// AssetTree handles GET /api/v1/browse/repositories/:name/asset-tree (and its
+// older alias .../raw-tree): every asset path of the repository folded into a
+// folder tree. It serves every format whose assets are addressed by path —
+// a Maven groupId/artifactId/version layout reads as nested folders. OCI
+// registries are refused: their storage paths (/blobs, /manifests) are not
+// what a user browses, and docker-tree serves them instead.
+func (h *BrowseHandler) AssetTree(c *gin.Context) {
 	repoName := c.Param("name")
 	ctx := c.Request.Context()
 
@@ -32,8 +37,9 @@ func (h *BrowseHandler) RawTree(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "repository not found"})
 		return
 	}
-	if !strings.EqualFold(string(repo.Format), string(domain.FormatRaw)) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "repository is not a raw format"})
+	format := domain.RepoFormat(strings.ToLower(strings.TrimSpace(string(repo.Format))))
+	if format.IsOCIRegistry() {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "repository is an OCI registry; use docker-tree"})
 		return
 	}
 
@@ -43,14 +49,14 @@ func (h *BrowseHandler) RawTree(c *gin.Context) {
 		if len(repoNames) == 0 {
 			c.JSON(http.StatusOK, gin.H{
 				"repository": repoName,
-				"format":     "raw",
+				"format":     string(format),
 				"root":       &rawBrowseNode{Kind: "folder", Label: "/", Path: "/", Children: []*rawBrowseNode{}},
 			})
 			return
 		}
 	}
 
-	rows, err := h.deps.Assets.ListRawBrowseAssets(ctx, repoNames)
+	rows, err := h.deps.Assets.ListBrowseAssets(ctx, repoNames, format)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -80,12 +86,12 @@ func (h *BrowseHandler) RawTree(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"repository": repoName,
-		"format":     "raw",
+		"format":     string(format),
 		"root":       root,
 	})
 }
 
-func buildRawTree(assets []domain.RawBrowseAsset) *rawBrowseNode {
+func buildRawTree(assets []domain.BrowseAsset) *rawBrowseNode {
 	root := &rawBrowseNode{Kind: "folder", Label: "/", Path: "/", Children: []*rawBrowseNode{}}
 	for _, a := range assets {
 		insertRawAsset(root, a)
@@ -94,7 +100,7 @@ func buildRawTree(assets []domain.RawBrowseAsset) *rawBrowseNode {
 	return root
 }
 
-func insertRawAsset(root *rawBrowseNode, a domain.RawBrowseAsset) {
+func insertRawAsset(root *rawBrowseNode, a domain.BrowseAsset) {
 	p := strings.TrimLeft(a.Path, "/")
 	if p == "" {
 		return

@@ -133,8 +133,9 @@ type AssetRepo interface {
 	// Blob-store delete uses this: a group member can hold assets even when
 	// no repository.blob_store_id points at it.
 	CountByBlobStoreID(ctx context.Context, blobStoreID string) (int, error)
-	// ListRawBrowseAssets returns all assets for the given raw-format repos with metadata for tree building.
-	ListRawBrowseAssets(ctx context.Context, repoNames []string) ([]domain.RawBrowseAsset, error)
+	// ListBrowseAssets returns all assets of the given repos that have format,
+	// with metadata for building the browse tree, ordered by path.
+	ListBrowseAssets(ctx context.Context, repoNames []string, format domain.RepoFormat) ([]domain.BrowseAsset, error)
 	// ListOCIImageNames returns the distinct image names held by the given OCI
 	// Distribution repositories — the <name> of a stored
 	// /manifests/<name>/<reference> asset. Only images that have a manifest are

@@ -721,8 +721,8 @@ type DockerBrowseRow struct {
 	PredicateType string `json:"predicateType,omitempty"`
 }
 
-// RawBrowseAsset is a flat asset record used to build the raw browse tree.
-type RawBrowseAsset struct {
+// BrowseAsset is a flat asset record used to build a path browse tree.
+type BrowseAsset struct {
 	Path        string
 	SizeBytes   int64
 	SHA256      string
