@@ -808,3 +808,30 @@ func TestLoad_ExampleConfigHasNoUnknownKeys(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, cfg.UnknownKeys)
 }
+
+// writeMinimalConfig writes a config file holding only what Load requires.
+func writeMinimalConfig(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	content := "" +
+		"database:\n  dsn: \"postgres://nexspence@localhost:5432/db?sslmode=disable\"\n" +
+		"auth:\n  jwt_secret: \"a-unique-production-secret-at-least-32b\"\n"
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
+	return path
+}
+
+// The job row keeps only the latest migration failure, so the per-item log
+// lines are the only full record: on unless an operator opts out.
+func TestLoad_MigrationItemErrors_DefaultsTrue(t *testing.T) {
+	cfg, err := Load(writeMinimalConfig(t))
+	require.NoError(t, err)
+	assert.True(t, cfg.Log.MigrationItemErrors)
+}
+
+func TestLoad_MigrationItemErrors_EnvOverride(t *testing.T) {
+	path := writeMinimalConfig(t)
+	t.Setenv("NEXSPENCE_LOG_MIGRATION_ITEM_ERRORS", "false")
+	cfg, err := Load(path)
+	require.NoError(t, err)
+	assert.False(t, cfg.Log.MigrationItemErrors)
+}
