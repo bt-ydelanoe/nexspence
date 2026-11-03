@@ -30,6 +30,9 @@ function seedRepos() {
 beforeEach(() => {
   seedAuthAsAdmin()
   seedRepos()
+  // Most of this file exercises the component list; the tree is the default,
+  // so pin the list here and opt the tree describes back in.
+  localStorage.setItem('browse-view', 'list')
 })
 afterEach(() => {
   vi.restoreAllMocks()
@@ -297,6 +300,10 @@ describe('BrowsePage — repo selector & empty states', () => {
 })
 
 describe('BrowsePage — Raw tree', () => {
+  beforeEach(() => {
+    localStorage.setItem('browse-view', 'tree')
+  })
+
   const rawTree = {
     root: {
       kind: 'folder', label: '', path: '', children: [
@@ -311,13 +318,13 @@ describe('BrowsePage — Raw tree', () => {
 
   function seedRaw() {
     server.use(
-      http.get('/api/v1/browse/repositories/:name/raw-tree', () => HttpResponse.json(rawTree)),
+      http.get('/api/v1/browse/repositories/:name/asset-tree', () => HttpResponse.json(rawTree)),
       http.get('/service/rest/v1/components/:id', () => HttpResponse.json({ tags: ['stable'] })),
     )
   }
 
   it('shows empty raw tree', async () => {
-    server.use(http.get('/api/v1/browse/repositories/:name/raw-tree', () => HttpResponse.json({ root: { kind: 'folder', label: '', path: '', children: [] } })))
+    server.use(http.get('/api/v1/browse/repositories/:name/asset-tree', () => HttpResponse.json({ root: { kind: 'folder', label: '', path: '', children: [] } })))
     renderBrowse('?repo=raw-hosted')
     expect(await screen.findByText('No files in this repository yet')).toBeInTheDocument()
   })
@@ -403,9 +410,14 @@ describe('BrowsePage — Raw tree', () => {
   it('deletes a raw folder (shows affected paths)', async () => {
     const user = userEvent.setup()
     let deleted = false
+    let deletedPath: string | null = null
     seedRaw()
     server.use(
-      http.delete('/api/v1/browse/repositories/:name/path', () => { deleted = true; return new HttpResponse(null, { status: 204 }) }),
+      http.delete('/api/v1/browse/repositories/:name/path', ({ request }) => {
+        deleted = true
+        deletedPath = new URL(request.url).searchParams.get('path')
+        return new HttpResponse(null, { status: 204 })
+      }),
     )
     renderBrowse('?repo=raw-hosted')
     const folderRow = (await screen.findByText('releases')).closest('div')!
@@ -415,6 +427,9 @@ describe('BrowsePage — Raw tree', () => {
     expect(screen.getByText(/files affected/)).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: /Delete 1 files/ }))
     await waitFor(() => expect(deleted).toBe(true))
+    // The server deletes by prefix: without the trailing slash, folder
+    // "releases" would also take a sibling "releases-old".
+    expect(deletedPath).toBe('/releases/')
   })
 
   it('shows the upload modal for hosted raw repos and uploads', async () => {
@@ -427,6 +442,102 @@ describe('BrowsePage — Raw tree', () => {
     // close it
     await user.click(screen.getByRole('button', { name: 'Cancel' }))
     await waitFor(() => expect(screen.queryByText('Upload file')).not.toBeInTheDocument())
+  })
+})
+
+describe('BrowsePage — List/Tree view toggle', () => {
+  const mavenTree = {
+    root: {
+      kind: 'folder', label: '/', path: '/', children: [
+        {
+          kind: 'folder', label: 'com', path: '/com', children: [
+            {
+              kind: 'folder', label: 'example', path: '/com/example', children: [
+                {
+                  kind: 'folder', label: 'pkg-a', path: '/com/example/pkg-a', children: [
+                    {
+                      kind: 'folder', label: '1.0', path: '/com/example/pkg-a/1.0', children: [
+                        { kind: 'file', label: 'pkg-a-1.0.jar', path: '/com/example/pkg-a/1.0/pkg-a-1.0.jar', size: 2048, componentId: 'comp-mvn-1' },
+                      ],
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+  }
+
+  function seedMaven(counters: { tree: number; list: number }) {
+    server.use(
+      http.get('/api/v1/browse/repositories/:name/asset-tree', () => { counters.tree++; return HttpResponse.json(mavenTree) }),
+      http.get('/service/rest/v1/components', () => {
+        counters.list++
+        return HttpResponse.json({
+          items: [{ id: 'comp-mvn-1', name: 'pkg-a', group: 'com.example', version: '1.0', format: 'maven2', assets: [] }],
+          continuationToken: null,
+        })
+      }),
+      http.get('/service/rest/v1/components/:id', () => HttpResponse.json({ tags: [] })),
+    )
+  }
+
+  it('opens a Maven repository as a groupId/artifactId/version tree by default', async () => {
+    localStorage.removeItem('browse-view')
+    const user = userEvent.setup()
+    const counters = { tree: 0, list: 0 }
+    seedMaven(counters)
+    renderBrowse('?repo=maven-hosted')
+    for (const seg of ['com', 'example', 'pkg-a', '1.0']) {
+      await user.click(await screen.findByText(seg))
+    }
+    expect(await screen.findByText('pkg-a-1.0.jar')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Tree/, pressed: true })).toBeInTheDocument()
+    expect(counters.list).toBe(0)
+  })
+
+  it('switches to the component list and back, remembering the choice', async () => {
+    localStorage.removeItem('browse-view')
+    const user = userEvent.setup()
+    const counters = { tree: 0, list: 0 }
+    seedMaven(counters)
+    renderBrowse('?repo=maven-hosted')
+    await screen.findByText('com')
+
+    await user.click(screen.getByRole('button', { name: /List/ }))
+    expect(await screen.findByText('1 components loaded')).toBeInTheDocument()
+    expect(localStorage.getItem('browse-view')).toBe('list')
+    expect(screen.queryByText('com')).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /Tree/ }))
+    expect(await screen.findByText('com')).toBeInTheDocument()
+    expect(localStorage.getItem('browse-view')).toBe('tree')
+  })
+
+  it('honours a stored List preference', async () => {
+    const counters = { tree: 0, list: 0 }
+    seedMaven(counters)
+    renderBrowse('?repo=maven-hosted')
+    expect(await screen.findByText('1 components loaded')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /List/, pressed: true })).toBeInTheDocument()
+    expect(counters.tree).toBe(0)
+  })
+
+  it('drills down to a component linked from Search', async () => {
+    localStorage.removeItem('browse-view')
+    seedMaven({ tree: 0, list: 0 })
+    renderBrowse('?repo=maven-hosted&cid=comp-mvn-1')
+    expect(await screen.findByText('File details')).toBeInTheDocument()
+    expect(screen.getAllByText('pkg-a-1.0.jar').length).toBeGreaterThan(0)
+  })
+
+  it('offers no toggle for an OCI registry, which has its own tree', async () => {
+    server.use(http.get('/api/v1/browse/repositories/:name/docker-tree', () => HttpResponse.json({ root: { kind: 'folder', label: '', path: '', children: [] } })))
+    renderBrowse('?repo=docker-hosted')
+    await screen.findByRole('button', { name: /Set me up/ })
+    expect(screen.queryByRole('group', { name: 'View mode' })).not.toBeInTheDocument()
   })
 })
 
