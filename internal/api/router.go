@@ -383,6 +383,7 @@ func NewRouter(ctx context.Context, cfg *config.Config, pool *pgxpool.Pool, log 
 		JWTSecret:     cfg.Auth.JWTSecret,
 		EncryptionKey: cfg.Auth.EncryptionKeyBytes(),
 		Log:           log,
+		LogItemErrors: cfg.Log.MigrationItemErrors,
 	})
 	// Re-attach to migrations interrupted by a restart. Without this a job left
 	// running when the process stopped sits in "running" with nothing behind it —
