@@ -177,7 +177,7 @@ export const handlers = [
   http.get('/api/v1/browse/repositories/:name/docker-tree', () =>
     HttpResponse.json({ rows: [] })
   ),
-  http.get('/api/v1/browse/repositories/:name/raw-tree', () =>
+  http.get('/api/v1/browse/repositories/:name/asset-tree', () =>
     HttpResponse.json({ rows: [] })
   ),
   http.get('/api/v1/browse/repositories/:name/oci-referrers', () =>
